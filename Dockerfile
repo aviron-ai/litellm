@@ -14,15 +14,10 @@ USER root
 # Install build dependencies
 RUN apk add --no-cache gcc python3-dev openssl openssl-dev
 
-
-RUN pip install --upgrade pip && \
-    pip install build
+RUN pip install --upgrade pip && pip install build
 
 # Copy the current directory contents into the container at /app
 COPY . .
-
-# Build Admin UI
-RUN chmod +x docker/build_admin_ui.sh && ./docker/build_admin_ui.sh
 
 # Build the package
 RUN rm -rf dist/* && python -m build
@@ -54,9 +49,9 @@ USER root
 RUN apk add --no-cache openssl
 
 WORKDIR /app
+
 # Copy the current directory contents into the container at /app
 COPY . .
-RUN ls -la /app
 
 # Copy the built wheel from the builder stage to the runtime stage; assumes only one wheel file is present
 COPY --from=builder /app/dist/*.whl .
