@@ -1077,9 +1077,51 @@ class LiteLLMCompletionResponsesConfig:
                                     "image_url": {"url": image_url_val},
                                 }
                             )
+                    elif part_type in ("input_file", "document"):
+                        # Convert file/document blocks into Anthropic-native
+                        # document format with source for downstream adapters.
+                        source = part.get("source")
+                        file_data = part.get("file_data")
+                        if source and isinstance(source, dict):
+                            # Already in Anthropic-like format:
+                            # {"type": "document", "source": {"type": "base64", ...}}
+                            normalized_blocks.append(
+                                {
+                                    "type": "document",
+                                    "source": source,
+                                }
+                            )
+                        elif isinstance(file_data, str) and file_data:
+                            # OpenAI Responses API input_file format:
+                            # {"type": "input_file", "file_data": "data:application/pdf;base64,<data>"}
+                            # Parse the data URI into Anthropic source format.
+                            try:
+                                _header, _b64data = file_data.split(
+                                    ";base64,", 1
+                                )
+                                _media_type = _header.split("data:", 1)[1]
+                                normalized_blocks.append(
+                                    {
+                                        "type": "document",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": _media_type,
+                                            "data": _b64data,
+                                        },
+                                    }
+                                )
+                            except (ValueError, IndexError):
+                                # Fallback: pass through as-is for downstream
+                                normalized_blocks.append(
+                                    {
+                                        "type": "document",
+                                        "file_data": file_data,
+                                        "filename": part.get("filename", ""),
+                                    }
+                                )
 
-                # Prefer structured blocks if we have images; otherwise return a string.
-                if any(b.get("type") == "image_url" for b in normalized_blocks):
+                # Prefer structured blocks if we have images or documents; otherwise return a string.
+                if any(b.get("type") in ("image_url", "document") for b in normalized_blocks):
                     # Ensure we include any accumulated text as text blocks too
                     return normalized_blocks
                 if text_acc:
