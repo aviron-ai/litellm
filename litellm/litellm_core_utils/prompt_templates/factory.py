@@ -1705,14 +1705,29 @@ def convert_to_anthropic_tool_result(
     """
     anthropic_content: Union[
         str,
-        List[Union[AnthropicMessagesToolResultContent, AnthropicMessagesImageParam]],
+        List[Union[AnthropicMessagesToolResultContent, AnthropicMessagesImageParam, AnthropicMessagesDocumentParam]],
     ] = ""
-    if isinstance(message["content"], str):
-        anthropic_content = message["content"]
-    elif isinstance(message["content"], List):
-        content_list = message["content"]
+
+    # If content is a string, check if it's a JSON array containing document blocks
+    _raw_content = message["content"]
+    if isinstance(_raw_content, str):
+        try:
+            import json as _json
+            _parsed = _json.loads(_raw_content)
+            if isinstance(_parsed, list) and any(
+                isinstance(item, dict) and item.get("type") == "document"
+                for item in _parsed
+            ):
+                _raw_content = _parsed
+        except (ValueError, TypeError):
+            pass
+
+    if isinstance(_raw_content, str):
+        anthropic_content = _raw_content
+    elif isinstance(_raw_content, List):
+        content_list = _raw_content
         anthropic_content_list: List[
-            Union[AnthropicMessagesToolResultContent, AnthropicMessagesImageParam]
+            Union[AnthropicMessagesToolResultContent, AnthropicMessagesImageParam, AnthropicMessagesDocumentParam]
         ] = []
         for content in content_list:
             if content["type"] == "text":
@@ -1742,6 +1757,39 @@ def convert_to_anthropic_tool_result(
                 anthropic_content_list.append(
                     cast(AnthropicMessagesImageParam, _anthropic_image_param)
                 )
+            elif content["type"] == "document":
+                # Handle document blocks (e.g. PDFs) in tool results.
+                # Two formats:
+                # 1) Already has "source" with base64 data (Anthropic-native format)
+                # 2) Has "file_data" as a data URI string (OpenAI Responses API format)
+                source = content.get("source")
+                file_data = content.get("file_data")
+                if source and isinstance(source, dict):
+                    anthropic_content_list.append(
+                        AnthropicMessagesDocumentParam(
+                            type="document",
+                            source=AnthropicContentParamSource(
+                                type=source.get("type", "base64"),
+                                media_type=source.get("media_type", "application/pdf"),
+                                data=source.get("data", ""),
+                            ),
+                        )
+                    )
+                elif isinstance(file_data, str) and file_data:
+                    # Parse data URI: "data:application/pdf;base64,<data>"
+                    image_chunk = convert_to_anthropic_image_obj(
+                        openai_image_url=file_data, format=None
+                    )
+                    anthropic_content_list.append(
+                        AnthropicMessagesDocumentParam(
+                            type="document",
+                            source=AnthropicContentParamSource(
+                                type="base64",
+                                media_type=image_chunk["media_type"],
+                                data=image_chunk["data"],
+                            ),
+                        )
+                    )
 
         anthropic_content = anthropic_content_list
     anthropic_tool_result: Optional[AnthropicMessagesToolResultParam] = None
